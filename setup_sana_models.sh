@@ -36,7 +36,7 @@ export LTX_TEXT_ENCODER_PATH="/home/junsongc/junsongc/code/diffusion/Sana/output
 export LTX_DISTILLED_LORA_PATH="${LTX2_DIR}/ltx-2-19b-distilled-lora-384.safetensors"
 
 # ─── Pipeline backend: Sana + LTX refiner ────────────────────────────────
-export PIPELINE_BACKEND="sana"
+export PIPELINE_BACKEND="sana"      # "ltx" or "sana: sana + ltx refiner"
 export SANA_MODEL_PATH="${SANA_DIR}"
 
 # ─── Sana generation options ─────────────────────────────────────────────

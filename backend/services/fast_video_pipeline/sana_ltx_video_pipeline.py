@@ -387,6 +387,18 @@ class SanaLTXFastVideoPipeline:
             num_frames=num_frames,
         )
 
+        # Derive actual frame count from Sana's latent temporal dimension.
+        # Sana may produce a different number of latent frames than requested;
+        # the chunk count for encode_video must match the real data.
+        _, _, lat_t, _, _ = video_latent.shape
+        VAE_TEMPORAL_COMPRESSION = 8
+        actual_frames = (lat_t - 1) * VAE_TEMPORAL_COMPRESSION + 1
+        if actual_frames != num_frames:
+            logger.info(
+                "Sana produced %d actual frames (latent T=%d) vs %d requested",
+                actual_frames, lat_t, num_frames,
+            )
+
         # Stage 2 + decode
         tiling_config = default_tiling_config()
         if self.enable_refine:
@@ -402,7 +414,7 @@ class SanaLTXFastVideoPipeline:
         else:
             video, audio = self._decode_sana_only(video_latent, seed)
 
-        chunks = video_chunks_number(num_frames, tiling_config)
+        chunks = video_chunks_number(actual_frames, tiling_config)
         encode_video_output(
             video=video,
             audio=audio,

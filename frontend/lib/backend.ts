@@ -16,6 +16,20 @@ export async function backendFetch(path: string, init?: RequestInit): Promise<Re
   return fetch(`${url}${path}`, { ...init, headers })
 }
 
+/** Build an HTTP URL that serves an output file from the backend.
+ *  Extracts the filename from a server-side absolute path and routes
+ *  through the backend's /api/outputs/ endpoint so it works when the
+ *  backend runs on a different machine (e.g. GPU cluster). */
+export async function outputPathToUrl(serverPath: string): Promise<string> {
+  const { url: backendUrl } = await getBackendCredentials()
+  const filename = serverPath.replace(/\\/g, '/').split('/').pop()
+  if (!filename) {
+    const normalized = serverPath.replace(/\\/g, '/')
+    return normalized.startsWith('/') ? `file://${normalized}` : `file:///${normalized}`
+  }
+  return `${backendUrl}/api/outputs/${encodeURIComponent(filename)}`
+}
+
 export async function backendWsUrl(path: string): Promise<string> {
   const { url, token } = await getBackendCredentials()
   const ws = url.replace('http://', 'ws://')

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { backendFetch } from '../lib/backend'
+import { backendFetch, outputPathToUrl } from '../lib/backend'
 import { logger } from '../lib/logger'
 
 export type IcLoraConditioningType = 'canny' | 'depth' | 'pose'
@@ -55,8 +55,7 @@ export function useIcLora() {
 
       const data = await response.json()
       if (response.ok && data.status === 'complete' && data.video_path) {
-        const pathNormalized = data.video_path.replace(/\\/g, '/')
-        const videoUrl = pathNormalized.startsWith('/') ? `file://${pathNormalized}` : `file:///${pathNormalized}`
+        const videoUrl = await outputPathToUrl(data.video_path)
         setState({
           isGenerating: false,
           status: 'Generation complete!',
