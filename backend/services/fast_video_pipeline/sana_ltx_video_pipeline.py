@@ -14,7 +14,7 @@ import gc
 import logging
 import os
 from collections.abc import Iterator
-from typing import Final, cast
+from typing import Final
 
 import torch
 
@@ -80,9 +80,13 @@ class SanaLTXFastVideoPipeline:
     ) -> None:
         self.device = device
         self.dtype = torch.bfloat16
-        self.checkpoint_path = checkpoint_path
-        self.gemma_root = gemma_root
-        self.upsampler_path = upsampler_path
+
+        # Sana-specific LTX 2.0 model overrides (SANA_LTX_*).
+        # When set, these take priority over the global paths passed from
+        # the pipeline handler — which default to LTX 2.3 models.
+        self.checkpoint_path = os.environ.get("SANA_LTX_CHECKPOINT_PATH", checkpoint_path)
+        self.gemma_root = os.environ.get("SANA_LTX_GEMMA_ROOT") or gemma_root
+        self.upsampler_path = os.environ.get("SANA_LTX_UPSAMPLER_PATH", upsampler_path)
 
         self.enable_refine = os.environ.get("SANA_ENABLE_REFINE", "true").lower() == "true"
         self.enable_upsample = os.environ.get("SANA_ENABLE_UPSAMPLE", "false").lower() == "true"
@@ -118,15 +122,28 @@ class SanaLTXFastVideoPipeline:
         }
 
     def _build_model_ledger(self) -> "ModelLedger":
+        from ltx_core.loader import LTXV_LORA_COMFY_RENAMING_MAP, LoraPathStrengthAndSDOps
         from ltx_core.quantization import QuantizationPolicy
         from ltx_pipelines.utils import ModelLedger
+
+        lora_path = os.environ.get(
+            "SANA_LTX_DISTILLED_LORA_PATH",
+            os.environ.get("LTX_DISTILLED_LORA_PATH", ""),
+        )
+        loras: tuple[LoraPathStrengthAndSDOps, ...] | None = None
+        if lora_path and os.path.isfile(lora_path):
+            loras = (LoraPathStrengthAndSDOps(lora_path, 1.0, LTXV_LORA_COMFY_RENAMING_MAP),)
+            logger.info("Stage 2 distilled LoRA: %s", lora_path)
+        else:
+            logger.warning("No distilled LoRA found (SANA_LTX_DISTILLED_LORA_PATH / LTX_DISTILLED_LORA_PATH=%r)", lora_path)
 
         return ModelLedger(
             dtype=self.dtype,
             device=self.device,
             checkpoint_path=self._refiner_args["checkpoint_path"],
             gemma_root_path=self._refiner_args["gemma_root_path"],
-            loras=None,
+            spatial_upsampler_path=self._refiner_args["upsampler_path"],
+            loras=loras,
             quantization=QuantizationPolicy.fp8_cast() if device_supports_fp8(self.device) else None,
         )
 
@@ -213,11 +230,12 @@ class SanaLTXFastVideoPipeline:
         from ltx_core.model.upsampler.model import upsample_video
         from ltx_core.model.video_vae import decode_video as vae_decode_video
         from ltx_core.text_encoders.gemma import encode_text
-        from ltx_core.types import VideoPixelShape
+        from ltx_core.types import AudioLatentShape, VideoPixelShape
         from ltx_pipelines.utils.constants import STAGE_2_DISTILLED_SIGMA_VALUES
         from ltx_pipelines.utils.helpers import (
             cleanup_memory,
-            denoise_audio_video,
+            noise_audio_state,
+            noise_video_state,
             simple_denoising_func,
         )
         from ltx_pipelines.utils.types import PipelineComponents
@@ -296,19 +314,41 @@ class SanaLTXFastVideoPipeline:
                 ),
             )
 
-        video_state, audio_state = denoise_audio_video(
+        distilled_sigma_0 = STAGE_2_DISTILLED_SIGMA_VALUES[0]
+
+        video_state, video_tools = noise_video_state(
             output_shape=output_shape,
-            conditionings=[],
             noiser=noiser,
-            sigmas=stage_2_sigmas,
-            stepper=stepper,
-            denoising_loop_fn=cast(object, denoising_loop),
+            conditionings=[],
             components=components,
             dtype=self.dtype,
             device=self.device,
-            noise_scale=STAGE_2_DISTILLED_SIGMA_VALUES[0],
-            initial_video_latent=latent,
+            noise_scale=distilled_sigma_0,
+            initial_latent=latent,
         )
+
+        audio_shape = AudioLatentShape.from_video_pixel_shape(output_shape)
+        audio_latent = torch.zeros(
+            audio_shape.to_torch_shape(), dtype=self.dtype, device=self.device,
+        )
+        audio_state, audio_tools = noise_audio_state(
+            output_shape=output_shape,
+            noiser=noiser,
+            conditionings=[],
+            components=components,
+            dtype=self.dtype,
+            device=self.device,
+            noise_scale=distilled_sigma_0,
+            initial_latent=audio_latent,
+        )
+
+        video_state, audio_state = denoising_loop(
+            stage_2_sigmas, video_state, audio_state, stepper,
+        )
+        video_state = video_tools.clear_conditioning(video_state)
+        video_state = video_tools.unpatchify(video_state)
+        audio_state = audio_tools.clear_conditioning(audio_state)
+        audio_state = audio_tools.unpatchify(audio_state)
 
         if torch.cuda.is_available():
             torch.cuda.synchronize(self.device)

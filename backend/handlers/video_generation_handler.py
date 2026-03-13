@@ -194,18 +194,21 @@ class VideoGenerationHandler(StateHandlerBase):
         output_path = self._make_output_path()
 
         try:
-            settings = self.state.app_settings
-            use_api_encoding = not self._text.should_use_local_encoding()
-            if image is not None:
-                enhance = use_api_encoding and settings.prompt_enhancer_enabled_i2v
-            else:
-                enhance = use_api_encoding and settings.prompt_enhancer_enabled_t2v
-
-            encoding_method = "api" if use_api_encoding else "local"
             t_text_start = time.perf_counter()
-            self._text.prepare_text_encoding(enhanced_prompt, enhance_prompt=enhance)
+            if self.config.pipeline_backend.startswith("sana"):
+                logger.info("[%s] Sana pipeline handles text encoding internally — skipping LTX text prep", gen_mode)
+            else:
+                settings = self.state.app_settings
+                use_api_encoding = not self._text.should_use_local_encoding()
+                if image is not None:
+                    enhance = use_api_encoding and settings.prompt_enhancer_enabled_i2v
+                else:
+                    enhance = use_api_encoding and settings.prompt_enhancer_enabled_t2v
+
+                encoding_method = "api" if use_api_encoding else "local"
+                self._text.prepare_text_encoding(enhanced_prompt, enhance_prompt=enhance)
+                logger.info("[%s] Text encoding (%s): %.2fs", gen_mode, encoding_method, time.perf_counter() - t_text_start)
             t_text_end = time.perf_counter()
-            logger.info("[%s] Text encoding (%s): %.2fs", gen_mode, encoding_method, t_text_end - t_text_start)
 
             self._generation.update_progress("inference", 15, 0, total_steps)
 
