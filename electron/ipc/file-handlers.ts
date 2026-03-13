@@ -168,6 +168,9 @@ export function registerFileHandlers(): void {
 
   ipcMain.handle('copy-to-project-assets', async (_event, srcPath: string, projectId: string) => {
     try {
+      if (!fs.existsSync(srcPath)) {
+        return { success: false, error: 'source-not-local' }
+      }
       const resolvedSrc = validatePath(srcPath, getAllowedRoots())
       const assetsRoot = getProjectAssetsPath()
       const destDir = path.join(assetsRoot, projectId)

@@ -201,11 +201,15 @@ export async function startPythonBackend(): Promise<void> {
   // already-running server (e.g. GPU box reached via SSH tunnel).
   const remoteUrl = process.env.LTX_BACKEND_URL
   if (remoteUrl) {
+    logger.info(`LTX_BACKEND_URL is set, probing external backend at ${remoteUrl}...`)
     const healthy = await probeBackendHealth(3000, remoteUrl)
     if (healthy) {
       backendUrl = remoteUrl
-      backendOwnership = 'adopted'
+      authToken = null
+      adminToken = null
+      backendOwnership = 'external'
       publishBackendHealthStatus({ status: 'alive' })
+      logger.info(`Using external backend at ${remoteUrl}`)
       return
     }
     throw new Error(`Remote backend at ${remoteUrl} is not reachable`)
@@ -444,7 +448,7 @@ export function stopPythonBackend(): void {
     return
   }
 
-  if (backendOwnership === 'adopted') {
+  if (backendOwnership === 'adopted' || backendOwnership === 'external') {
     backendOwnership = null
     latestBackendHealthStatus = null
   }

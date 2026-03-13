@@ -220,6 +220,8 @@ export function useGeneration(): UseGenerationReturn {
       
       if (result.status === 'complete' && result.video_path) {
         const videoUrl = await outputPathToUrl(result.video_path)
+        console.log('[DEBUG] video_path from backend:', result.video_path)
+        console.log('[DEBUG] resolved videoUrl:', videoUrl)
         
         setState({
           isGenerating: false,

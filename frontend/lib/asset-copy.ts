@@ -15,7 +15,7 @@ export async function copyToAssetFolder(
     if (result.success && result.path && result.url) {
       return { path: result.path, url: result.url }
     }
-    if (result.error) {
+    if (result.error && result.error !== 'source-not-local') {
       logger.warn(`Failed to copy asset to project folder: ${result.error}`)
     }
   } catch (e) {
