@@ -333,6 +333,7 @@ function PromptBar({
   settings,
   onSettingsChange,
   shouldVideoGenerateWithLtxApi,
+  pipelineBackend,
   canGenerate,
   buttonLabel,
   buttonIcon,
@@ -367,6 +368,7 @@ function PromptBar({
   }
   onSettingsChange: (settings: any) => void
   shouldVideoGenerateWithLtxApi: boolean
+  pipelineBackend: string
   icLoraCondType?: ICLoraConditioningType
   onIcLoraCondTypeChange?: (type: ICLoraConditioningType) => void
   icLoraStrength?: number
@@ -386,7 +388,7 @@ function PromptBar({
   const videoResolutionOptions = shouldVideoGenerateWithLtxApi
     ? (inputAudio ? ['1080p'] : [...FORCED_API_VIDEO_RESOLUTIONS])
     : ['540p', '720p', '1080p']
-  const videoFpsOptions = shouldVideoGenerateWithLtxApi ? [...FORCED_API_VIDEO_FPS] : [24, 25, 50]
+  const videoFpsOptions = shouldVideoGenerateWithLtxApi ? [...FORCED_API_VIDEO_FPS] : [16, 24, 25, 50]
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
@@ -676,7 +678,7 @@ function PromptBar({
                       { value: 'pro', label: 'LTX-2.3 Pro (API)' },
                     ]
                   : [
-                      { value: 'fast', label: 'LTX 2.3 Fast' },
+                      { value: 'fast', label: pipelineBackend.startsWith('sana') ? 'Sana + LTX Refiner' : 'LTX 2.3 Fast' },
                     ]
               }
               trigger={
@@ -685,7 +687,7 @@ function PromptBar({
                   <span className="text-zinc-300 font-medium">
                     {shouldVideoGenerateWithLtxApi
                       ? (settings.model === 'pro' ? 'LTX-2.3 Pro (API)' : 'LTX-2.3 Fast (API)')
-                      : 'LTX 2.3 Fast'}
+                      : pipelineBackend.startsWith('sana') ? 'Sana + LTX Refiner' : 'LTX 2.3 Fast'}
                   </span>
                 </>
               }
@@ -836,7 +838,7 @@ const gallerySizeClasses: Record<GallerySize, string> = {
   large: 'grid-cols-1 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3',
 }
 
-const DEFAULT_VIDEO_SETTINGS = {
+const LTX_VIDEO_SETTINGS = {
   model: 'fast',
   duration: 5,
   videoResolution: '540p',
@@ -845,6 +847,21 @@ const DEFAULT_VIDEO_SETTINGS = {
   imageResolution: '1080p',
   variations: 1,
   audio: true,
+}
+
+const SANA_VIDEO_SETTINGS = {
+  model: 'fast',
+  duration: 5,
+  videoResolution: '720p',
+  fps: 16,
+  aspectRatio: '9:16',
+  imageResolution: '1080p',
+  variations: 1,
+  audio: true,
+}
+
+function getDefaultVideoSettings(backend: string) {
+  return backend.startsWith('sana') ? { ...SANA_VIDEO_SETTINGS } : { ...LTX_VIDEO_SETTINGS }
 }
 
 export function GenSpace() {
@@ -867,7 +884,7 @@ export function GenSpace() {
     setGenSpaceIcLoraSource,
     setPendingIcLoraUpdate,
   } = useProjects()
-  const { shouldVideoGenerateWithLtxApi, forceApiGenerations, settings: appSettings } = useAppSettings()
+  const { shouldVideoGenerateWithLtxApi, forceApiGenerations, settings: appSettings, pipelineBackend } = useAppSettings()
   const [mode, setMode] = useState<'image' | 'video' | 'retake' | 'ic-lora'>('video')
   const [prompt, setPrompt] = useState('')
   const [inputImage, setInputImage] = useState<string | null>(null)
@@ -897,7 +914,12 @@ export function GenSpace() {
       conditioningStrength: number
     }
   } | null>(null)
-  const [settings, setSettings] = useState(() => ({ ...DEFAULT_VIDEO_SETTINGS }))
+  const [settings, setSettings] = useState(() => getDefaultVideoSettings(pipelineBackend))
+
+  useEffect(() => {
+    setSettings(getDefaultVideoSettings(pipelineBackend))
+  }, [pipelineBackend])
+
   const applyForcedVideoSettings = useCallback(
     (next: { model: string; duration: number; videoResolution: string; fps: number; audio: boolean; aspectRatio: string; imageResolution: string; variations: number }) => {
       if (!shouldVideoGenerateWithLtxApi || mode !== 'video') return next
@@ -1663,6 +1685,7 @@ export function GenSpace() {
           settings={settings}
           onSettingsChange={(nextSettings) => setSettings(applyForcedVideoSettings(nextSettings))}
           shouldVideoGenerateWithLtxApi={shouldVideoGenerateWithLtxApi}
+          pipelineBackend={pipelineBackend}
           icLoraCondType={icLoraCondType}
           onIcLoraCondTypeChange={setIcLoraCondType}
           icLoraStrength={icLoraStrength}

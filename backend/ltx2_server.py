@@ -200,6 +200,8 @@ CAMERA_MOTION_PROMPTS = {
 
 DEFAULT_NEGATIVE_PROMPT = """blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, wrong hand count, artifacts around text, inconsistent perspective, camera shake, incorrect depth of field"""
 
+PIPELINE_BACKEND = os.environ.get("PIPELINE_BACKEND", "ltx").lower().strip()
+
 runtime_config = RuntimeConfig(
     device=DEVICE,
     default_models_dir=DEFAULT_MODELS_DIR,
@@ -209,6 +211,7 @@ runtime_config = RuntimeConfig(
     settings_file=SETTINGS_FILE,
     ltx_api_base_url=LTX_API_BASE_URL,
     force_api_generations=FORCE_API_GENERATIONS,
+    pipeline_backend=PIPELINE_BACKEND,
     use_sage_attention=use_sage_attention,
     camera_motion_prompts=CAMERA_MOTION_PROMPTS,
     default_negative_prompt=DEFAULT_NEGATIVE_PROMPT,
@@ -292,10 +295,11 @@ if __name__ == "__main__":
     # Bind the socket ourselves so we know the actual port before uvicorn starts.
     sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
     sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
-    sock.bind(("127.0.0.1", port))
+    _bind_host = os.environ.get("LTX_HOST", "0.0.0.0")
+    sock.bind((_bind_host, port))
     actual_port = int(sock.getsockname()[1])
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=actual_port, log_level="info", access_log=False, log_config=log_config)
+    config = uvicorn.Config(app, host=_bind_host, port=actual_port, log_level="info", access_log=False, log_config=log_config)
     server = uvicorn.Server(config)
 
     _orig_startup = server.startup
@@ -304,7 +308,7 @@ if __name__ == "__main__":
         await _orig_startup(sockets=sockets)
         if server.started:
             # Machine-parseable ready message — Electron matches this line
-            print(f"Server running on http://127.0.0.1:{actual_port}", flush=True)
+            print(f"Server running on http://{_bind_host}:{actual_port}", flush=True)
 
     server.startup = _startup_with_ready_msg  # type: ignore[assignment]
 

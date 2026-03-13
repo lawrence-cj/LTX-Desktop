@@ -98,6 +98,7 @@ class GpuInfoResponse(BaseModel):
 
 class RuntimePolicyResponse(BaseModel):
     force_api_generations: bool
+    pipeline_backend: str = "ltx"
 
 
 class GenerationProgressResponse(BaseModel):

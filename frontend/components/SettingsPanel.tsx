@@ -29,6 +29,7 @@ interface SettingsPanelProps {
   mode?: GenerationMode
   forceApiGenerations?: boolean
   hasAudio?: boolean
+  pipelineBackend?: string
 }
 
 export function SettingsPanel({
@@ -38,6 +39,7 @@ export function SettingsPanel({
   mode = 'text-to-video',
   forceApiGenerations = false,
   hasAudio = false,
+  pipelineBackend = 'ltx',
 }: SettingsPanelProps) {
   const isImageMode = mode === 'text-to-image'
   const LOCAL_MAX_DURATION: Record<string, number> = { '540p': 20, '720p': 10, '1080p': 5 }
@@ -67,7 +69,7 @@ export function SettingsPanel({
   const resolutionOptions = forceApiGenerations
     ? (hasAudio ? ['1080p'] : [...FORCED_API_VIDEO_RESOLUTIONS])
     : ['1080p', '720p', '540p']
-  const fpsOptions = forceApiGenerations ? [...FORCED_API_VIDEO_FPS] : [24, 25, 50]
+  const fpsOptions = forceApiGenerations ? [...FORCED_API_VIDEO_FPS] : [16, 24, 25, 50]
 
   // Image mode settings
   if (isImageMode) {
@@ -115,7 +117,7 @@ export function SettingsPanel({
           onChange={(e) => handleChange('model', e.target.value)}
           disabled={disabled}
         >
-          <option value="fast">LTX 2.3 Fast</option>
+          <option value="fast">{pipelineBackend.startsWith('sana') ? 'Sana + LTX Refiner' : 'LTX 2.3 Fast'}</option>
         </Select>
       ) : (
         <Select

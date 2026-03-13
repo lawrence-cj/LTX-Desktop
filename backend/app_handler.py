@@ -239,9 +239,34 @@ class ServiceBundle:
     retake_pipeline_class: type[RetakePipeline]
 
 
+def _resolve_video_pipeline_class() -> type[FastVideoPipeline]:
+    """Select video pipeline class based on PIPELINE_BACKEND env var.
+
+    Supported values:
+        "ltx"            — default LTX DistilledPipeline (original behaviour)
+        "sana"           — Sana Video + LTX refiner via ltx_core (recommended for Sana)
+        "sana-diffusers" — Sana Video + LTX2 refiner via pure diffusers
+    """
+    import os
+
+    backend = os.environ.get("PIPELINE_BACKEND", "ltx").lower().strip()
+
+    if backend == "sana":
+        from services.fast_video_pipeline.sana_ltx_video_pipeline import SanaLTXFastVideoPipeline
+
+        return SanaLTXFastVideoPipeline
+    elif backend == "sana-diffusers":
+        from services.fast_video_pipeline.sana_ltx_diffusers_pipeline import SanaLTXDiffusersPipeline
+
+        return SanaLTXDiffusersPipeline
+    else:
+        from services.fast_video_pipeline.ltx_fast_video_pipeline import LTXFastVideoPipeline
+
+        return LTXFastVideoPipeline
+
+
 def build_default_service_bundle(config: RuntimeConfig) -> ServiceBundle:
     """Build real runtime services with lazy heavy imports isolated from tests."""
-    from services.fast_video_pipeline.ltx_fast_video_pipeline import LTXFastVideoPipeline
     from services.zit_api_client.zit_api_client_impl import ZitAPIClientImpl
     from services.gpu_cleaner.torch_cleaner import TorchCleaner
     from services.gpu_info.gpu_info_impl import GpuInfoImpl
@@ -259,6 +284,7 @@ def build_default_service_bundle(config: RuntimeConfig) -> ServiceBundle:
     from services.video_processor.video_processor_impl import VideoProcessorImpl
 
     http = HTTPClientImpl()
+    video_pipeline_class = _resolve_video_pipeline_class()
 
     return ServiceBundle(
         http=http,
@@ -274,7 +300,7 @@ def build_default_service_bundle(config: RuntimeConfig) -> ServiceBundle:
         task_runner=ThreadingRunner(),
         ltx_api_client=LTXAPIClientImpl(http=http, ltx_api_base_url=config.ltx_api_base_url),
         zit_api_client=ZitAPIClientImpl(http=http),
-        fast_video_pipeline_class=LTXFastVideoPipeline,
+        fast_video_pipeline_class=video_pipeline_class,
         image_generation_pipeline_class=ZitImageGenerationPipeline,
         ic_lora_pipeline_class=LTXIcLoraPipeline,
         depth_processor_pipeline_class=MidasDPTPipeline,

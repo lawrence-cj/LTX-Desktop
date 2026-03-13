@@ -22,7 +22,7 @@ import { sanitizeForcedApiVideoSettings } from '../lib/api-video-options'
 import { RetakePanel } from '../components/RetakePanel'
 import { ICLoraPanel, CONDITIONING_TYPES, type ICLoraConditioningType } from '../components/ICLoraPanel'
 
-const DEFAULT_SETTINGS: GenerationSettings = {
+const LTX_DEFAULT_SETTINGS: GenerationSettings = {
   model: 'fast',
   duration: 5,
   videoResolution: '540p',
@@ -36,16 +36,38 @@ const DEFAULT_SETTINGS: GenerationSettings = {
   imageSteps: 4,
 }
 
+const SANA_DEFAULT_SETTINGS: GenerationSettings = {
+  model: 'fast',
+  duration: 5,
+  videoResolution: '720p',
+  fps: 16,
+  audio: true,
+  cameraMotion: 'none',
+  aspectRatio: '9:16',
+  // Image settings
+  imageResolution: '1080p',
+  imageAspectRatio: '16:9',
+  imageSteps: 4,
+}
+
+function getDefaultSettings(pipelineBackend: string): GenerationSettings {
+  return pipelineBackend.startsWith('sana') ? { ...SANA_DEFAULT_SETTINGS } : { ...LTX_DEFAULT_SETTINGS }
+}
+
 export function Playground() {
   const { goHome } = useProjects()
-  const { forceApiGenerations, shouldVideoGenerateWithLtxApi } = useAppSettings()
+  const { forceApiGenerations, shouldVideoGenerateWithLtxApi, pipelineBackend } = useAppSettings()
   const [mode, setMode] = useState<GenerationMode>('text-to-video')
   const [prompt, setPrompt] = useState('')
   const [selectedImage, setSelectedImage] = useState<string | null>(null)
   const [selectedAudio, setSelectedAudio] = useState<string | null>(null)
-  const [settings, setSettings] = useState<GenerationSettings>(() => ({ ...DEFAULT_SETTINGS }))
+  const [settings, setSettings] = useState<GenerationSettings>(() => getDefaultSettings(pipelineBackend))
 
   const { status, processStatus } = useBackend()
+
+  useEffect(() => {
+    setSettings(getDefaultSettings(pipelineBackend))
+  }, [pipelineBackend])
 
   useEffect(() => {
     if (!shouldVideoGenerateWithLtxApi || mode === 'text-to-image') return
@@ -187,7 +209,7 @@ export function Playground() {
     setPrompt('')
     setSelectedImage(null)
     setSelectedAudio(null)
-    const baseDefaults = { ...DEFAULT_SETTINGS }
+    const baseDefaults = getDefaultSettings(pipelineBackend)
     const shouldSanitizeVideoSettings = shouldVideoGenerateWithLtxApi && mode !== 'text-to-image'
     setSettings(shouldSanitizeVideoSettings ? sanitizeForcedApiVideoSettings(baseDefaults) : baseDefaults)
     if (mode !== 'text-to-image') setMode('text-to-video')
@@ -363,6 +385,7 @@ export function Playground() {
                 mode={mode}
                 forceApiGenerations={shouldVideoGenerateWithLtxApi}
                 hasAudio={!!selectedAudio}
+                pipelineBackend={pipelineBackend}
               />
             )}
 

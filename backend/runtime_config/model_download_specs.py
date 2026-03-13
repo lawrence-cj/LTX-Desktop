@@ -126,11 +126,26 @@ def _normalized_relative_path(
     return Path(*normalized_parts)
 
 
+_MODEL_PATH_ENV_MAP: dict[ModelFileType, str] = {
+    "checkpoint": "LTX_CHECKPOINT_PATH",
+    "upsampler": "LTX_UPSAMPLER_PATH",
+    "text_encoder": "LTX_TEXT_ENCODER_PATH",
+    "distilled_lora": "LTX_DISTILLED_LORA_PATH",
+}
+
+
 def resolve_model_path(
     models_dir: Path,
     specs: Mapping[ModelFileType, ModelFileDownloadSpec],
     model_type: ModelFileType,
 ) -> Path:
+    import os
+
+    env_key = _MODEL_PATH_ENV_MAP.get(model_type)
+    if env_key:
+        env_val = os.environ.get(env_key)
+        if env_val:
+            return Path(env_val)
     return models_dir / _normalized_relative_path(specs, model_type)
 
 

@@ -59,6 +59,7 @@ interface AppSettingsContextValue {
   saveGeminiApiKey: (value: string) => Promise<void>
   forceApiGenerations: boolean
   shouldVideoGenerateWithLtxApi: boolean
+  pipelineBackend: string
 }
 
 const AppSettingsContext = createContext<AppSettingsContextValue | null>(null)
@@ -100,6 +101,7 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
   const [isLoaded, setIsLoaded] = useState(false)
   const [runtimePolicyLoaded, setRuntimePolicyLoaded] = useState(false)
   const [forceApiGenerations, setForceApiGenerations] = useState(true)
+  const [pipelineBackend, setPipelineBackend] = useState('ltx')
   const [backendProcessStatus, setBackendProcessStatus] = useState<BackendProcessStatus | null>(null)
 
   useEffect(() => {
@@ -115,13 +117,16 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
           throw new Error(`Runtime policy fetch failed with status ${response.status}`)
         }
 
-        const payload = (await response.json()) as { force_api_generations?: unknown }
+        const payload = (await response.json()) as { force_api_generations?: unknown; pipeline_backend?: unknown }
         if (typeof payload.force_api_generations !== 'boolean') {
           throw new Error('Runtime policy response missing force_api_generations boolean')
         }
 
         if (!cancelled) {
           setForceApiGenerations(payload.force_api_generations)
+          if (typeof payload.pipeline_backend === 'string') {
+            setPipelineBackend(payload.pipeline_backend)
+          }
         }
       } catch {
         if (!cancelled) {
@@ -288,8 +293,9 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
       saveGeminiApiKey,
       forceApiGenerations,
       shouldVideoGenerateWithLtxApi,
+      pipelineBackend,
     }),
-    [forceApiGenerations, isLoaded, refreshSettings, runtimePolicyLoaded, saveFalApiKey, saveGeminiApiKey, saveLtxApiKey, settings, shouldVideoGenerateWithLtxApi, updateSettings],
+    [forceApiGenerations, isLoaded, pipelineBackend, refreshSettings, runtimePolicyLoaded, saveFalApiKey, saveGeminiApiKey, saveLtxApiKey, settings, shouldVideoGenerateWithLtxApi, updateSettings],
   )
 
   return <AppSettingsContext.Provider value={contextValue}>{children}</AppSettingsContext.Provider>

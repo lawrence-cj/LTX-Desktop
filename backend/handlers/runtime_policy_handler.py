@@ -11,5 +11,7 @@ class RuntimePolicyHandler:
         self._config = config
 
     def get_runtime_policy(self) -> RuntimePolicyResponse:
-        # Server-side single source of truth for forced API mode.
-        return RuntimePolicyResponse(force_api_generations=self._config.force_api_generations)
+        return RuntimePolicyResponse(
+            force_api_generations=self._config.force_api_generations,
+            pipeline_backend=self._config.pipeline_backend,
+        )

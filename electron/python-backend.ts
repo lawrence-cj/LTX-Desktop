@@ -197,6 +197,20 @@ export function getPythonPath(): string {
 }
 
 export async function startPythonBackend(): Promise<void> {
+  // Remote backend mode: skip spawning Python entirely and point at an
+  // already-running server (e.g. GPU box reached via SSH tunnel).
+  const remoteUrl = process.env.LTX_BACKEND_URL
+  if (remoteUrl) {
+    const healthy = await probeBackendHealth(3000, remoteUrl)
+    if (healthy) {
+      backendUrl = remoteUrl
+      backendOwnership = 'adopted'
+      publishBackendHealthStatus({ status: 'alive' })
+      return
+    }
+    throw new Error(`Remote backend at ${remoteUrl} is not reachable`)
+  }
+
   if (startPromise) {
     return startPromise
   }
