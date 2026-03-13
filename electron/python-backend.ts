@@ -24,7 +24,7 @@ export function getBackendUrl(): string | null { return backendUrl }
 export function getAuthToken(): string | null { return authToken }
 export function getAdminToken(): string | null { return adminToken }
 
-type BackendOwnership = 'managed' | 'adopted' | null
+type BackendOwnership = 'managed' | 'adopted' | 'external' | null
 
 let backendOwnership: BackendOwnership = null
 

@@ -43,7 +43,7 @@ const SANA_DEFAULT_SETTINGS: GenerationSettings = {
   fps: 16,
   audio: true,
   cameraMotion: 'none',
-  aspectRatio: '9:16',
+  aspectRatio: '16:9',
   // Image settings
   imageResolution: '1080p',
   imageAspectRatio: '16:9',

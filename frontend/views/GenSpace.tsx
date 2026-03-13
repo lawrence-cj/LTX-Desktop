@@ -854,7 +854,7 @@ const SANA_VIDEO_SETTINGS = {
   duration: 5,
   videoResolution: '720p',
   fps: 16,
-  aspectRatio: '9:16',
+  aspectRatio: '16:9',
   imageResolution: '1080p',
   variations: 1,
   audio: true,
