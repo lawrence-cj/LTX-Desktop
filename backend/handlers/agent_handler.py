@@ -313,7 +313,6 @@ class AgentHandler(StateHandlerBase):
             audio="true" if req.generate_audio else "false",
             duration=str(scene.duration),
             fps=req.fps,
-            audio="false",
             imagePath=scene.image_path,
             aspectRatio=req.aspect_ratio,
         )
