@@ -10,6 +10,7 @@ import { logger } from './lib/logger'
 import { Home } from './views/Home'
 import { Project } from './views/Project'
 import { Playground } from './views/Playground'
+import { AgentView } from './views/AgentView'
 import { LaunchGate } from './components/FirstRunSetup'
 import { PythonSetup } from './components/PythonSetup'
 import { SettingsModal, type SettingsTabId } from './components/SettingsModal'
@@ -431,6 +432,8 @@ function AppContent() {
         return <Project />
       case 'playground':
         return <Playground />
+      case 'agent':
+        return <AgentView />
       default:
         return <Home />
     }

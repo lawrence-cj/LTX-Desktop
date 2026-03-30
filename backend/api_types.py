@@ -301,3 +301,100 @@ class IcLoraGenerateRequest(BaseModel):
     cfg_guidance_scale: float = 1.0
     negative_prompt: str = ""
     images: list[IcLoraImageInput] = Field(default_factory=_default_ic_lora_images)
+
+
+# ============================================================
+# Video Agent Types
+# ============================================================
+
+VideoStyle = Literal[
+    "cinematic",
+    "anime",
+    "realistic",
+    "fantasy",
+    "noir",
+    "documentary",
+]
+
+VIDEO_STYLE_PROMPTS: dict[VideoStyle, str] = {
+    "cinematic": "cinematic lighting, film grain, shallow depth of field, 35mm film, professional color grading, anamorphic lens flare, dramatic composition, movie quality",
+    "anime": "anime style, vibrant saturated colors, cel shading, Japanese animation aesthetic, detailed line art, expressive character animation, Studio Ghibli quality",
+    "realistic": "photorealistic, natural lighting, high detail, 8K UHD quality, lifelike textures, real-world physics, DSLR camera look, sharp focus",
+    "fantasy": "fantasy art style, magical atmosphere, ethereal lighting, dreamlike quality, volumetric god rays, mystical particles, rich saturated palette",
+    "noir": "film noir style, high contrast black and white, dramatic chiaroscuro shadows, moody atmosphere, venetian blinds lighting, 1940s aesthetic",
+    "documentary": "documentary style, handheld camera, natural color grading, raw footage feel, available light, authentic atmosphere, observational",
+}
+
+VIDEO_STYLE_NEGATIVE_PROMPTS: dict[VideoStyle, str] = {
+    "cinematic": "amateur, low quality, blurry, overexposed, shaky camera, bad composition",
+    "anime": "3D render, photorealistic, uncanny valley, blurry, low resolution",
+    "realistic": "cartoon, anime, painting, illustration, CGI look, artificial, fake",
+    "fantasy": "mundane, boring, gray, desaturated, photorealistic, modern urban",
+    "noir": "colorful, bright, cheerful, modern, low contrast, flat lighting",
+    "documentary": "cinematic, staged, artificial, CGI, fantasy, unrealistic",
+}
+
+DEFAULT_AGENT_NEGATIVE_PROMPT = (
+    "blurry, out of focus, low quality, pixelated, distorted, deformed, "
+    "watermark, text overlay, logo, bad anatomy, extra limbs, flickering, "
+    "inconsistent lighting, camera shake, compression artifacts"
+)
+
+
+class AgentSceneInput(BaseModel):
+    """User-provided scene override (optional)."""
+
+    description: str
+    duration: int | None = None
+    camera_motion: VideoCameraMotion | None = None
+    image_path: str | None = None
+
+
+def _default_agent_scenes() -> list[AgentSceneInput]:
+    return []
+
+
+class AgentGenerateRequest(BaseModel):
+    script: NonEmptyPrompt
+    style: VideoStyle = "cinematic"
+    resolution: str = "720p"
+    aspect_ratio: Literal["16:9", "9:16"] = "16:9"
+    duration_per_scene: int = 5
+    total_duration: int = 60
+    fps: str = "24"
+    model: str = "fast"
+    negative_prompt: str = ""
+    scenes: list[AgentSceneInput] = Field(default_factory=_default_agent_scenes)
+
+
+class AgentScenePlan(BaseModel):
+    """A single planned scene from the Director Agent."""
+
+    scene_index: int
+    description: str
+    prompt: str
+    duration: int
+    camera_motion: VideoCameraMotion
+    image_path: str | None = None
+
+
+class AgentGenerateResponse(BaseModel):
+    status: str  # "complete", "error", "cancelled"
+    video_paths: list[str] = Field(default_factory=list)
+    scene_plans: list[AgentScenePlan] = Field(default_factory=list)
+    final_video_path: str | None = None
+    error: str | None = None
+
+
+class AgentProgressResponse(BaseModel):
+    status: str  # "idle", "planning", "generating", "assembling", "complete", "error", "cancelled"
+    current_scene: int = 0
+    total_scenes: int = 0
+    scene_status: str = ""  # description of current scene
+    overall_progress: int = 0  # 0-100
+    completed_scenes: list[int] = Field(default_factory=list)
+    failed_scenes: list[int] = Field(default_factory=list)
+    scene_plans: list[AgentScenePlan] = Field(default_factory=list)
+    video_paths: list[str] = Field(default_factory=list)
+    final_video_path: str | None = None
+    error: str | None = None

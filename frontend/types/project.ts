@@ -412,7 +412,7 @@ export interface Project {
   activeTimelineId?: string
 }
 
-export type ViewType = 'home' | 'project' | 'playground'
+export type ViewType = 'home' | 'project' | 'playground' | 'agent'
 export type ProjectTab = 'gen-space' | 'video-editor'
 
 // Default tracks for new timelines

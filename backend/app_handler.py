@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from state.app_settings import AppSettings
 from handlers import (
+    AgentHandler,
     DownloadHandler,
     GenerationHandler,
     HealthHandler,
@@ -215,6 +216,15 @@ class AppHandler:
             config=config,
         )
 
+        self.agent = AgentHandler(
+            state=self.state,
+            lock=self._lock,
+            video_generation_handler=self.video_generation,
+            generation_handler=self.generation,
+            config=config,
+            http=http,
+        )
+
         self.downloads.cleanup_downloading_dir()
         self.models.refresh_available_files()
 
@@ -265,6 +275,25 @@ def _resolve_video_pipeline_class() -> type[FastVideoPipeline]:
         return LTXFastVideoPipeline
 
 
+def _resolve_image_pipeline_class() -> type[ImageGenerationPipeline]:
+    """Select image pipeline class based on PIPELINE_BACKEND env var.
+
+    When the backend is ``sana*``, use SanaImageGenerationPipeline;
+    otherwise fall back to the default ZitImageGenerationPipeline.
+    """
+    import os
+
+    backend = os.environ.get("PIPELINE_BACKEND", "ltx").lower().strip()
+    if backend.startswith("sana"):
+        from services.image_generation_pipeline.sana_image_generation_pipeline import SanaImageGenerationPipeline
+
+        return SanaImageGenerationPipeline
+
+    from services.image_generation_pipeline.zit_image_generation_pipeline import ZitImageGenerationPipeline
+
+    return ZitImageGenerationPipeline
+
+
 def build_default_service_bundle(config: RuntimeConfig) -> ServiceBundle:
     """Build real runtime services with lazy heavy imports isolated from tests."""
     from services.zit_api_client.zit_api_client_impl import ZitAPIClientImpl
@@ -274,7 +303,6 @@ def build_default_service_bundle(config: RuntimeConfig) -> ServiceBundle:
     from services.a2v_pipeline.ltx_a2v_pipeline import LTXa2vPipeline
     from services.depth_processor_pipeline.midas_dpt_pipeline import MidasDPTPipeline
     from services.ic_lora_pipeline.ltx_ic_lora_pipeline import LTXIcLoraPipeline
-    from services.image_generation_pipeline.zit_image_generation_pipeline import ZitImageGenerationPipeline
     from services.ltx_api_client.ltx_api_client_impl import LTXAPIClientImpl
     from services.model_downloader.hugging_face_downloader import HuggingFaceDownloader
     from services.retake_pipeline.ltx_retake_pipeline import LTXRetakePipeline
@@ -285,6 +313,7 @@ def build_default_service_bundle(config: RuntimeConfig) -> ServiceBundle:
 
     http = HTTPClientImpl()
     video_pipeline_class = _resolve_video_pipeline_class()
+    image_pipeline_class = _resolve_image_pipeline_class()
 
     return ServiceBundle(
         http=http,
@@ -301,7 +330,7 @@ def build_default_service_bundle(config: RuntimeConfig) -> ServiceBundle:
         ltx_api_client=LTXAPIClientImpl(http=http, ltx_api_base_url=config.ltx_api_base_url),
         zit_api_client=ZitAPIClientImpl(http=http),
         fast_video_pipeline_class=video_pipeline_class,
-        image_generation_pipeline_class=ZitImageGenerationPipeline,
+        image_generation_pipeline_class=image_pipeline_class,
         ic_lora_pipeline_class=LTXIcLoraPipeline,
         depth_processor_pipeline_class=MidasDPTPipeline,
         pose_processor_pipeline_class=DWPosePipeline,
