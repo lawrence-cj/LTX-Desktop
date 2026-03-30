@@ -77,6 +77,9 @@ class AgentHandler(StateHandlerBase):
             self._agent_state = AgentState(status="planning")
 
         try:
+            # Phase 0: Apply pipeline configuration
+            self._apply_pipeline_config(req)
+
             # Phase 1: Plan scenes (try LLM first, fall back to rule-based)
             self._update_agent("planning", 0, 0, "Decomposing script into scenes...")
             scene_plans: list[AgentScenePlan] | None = None
@@ -183,6 +186,36 @@ class AgentHandler(StateHandlerBase):
             self._agent_state.status = "cancelled"
         # Also cancel any in-progress generation
         self._generation.cancel_generation()
+
+    def _apply_pipeline_config(self, req: AgentGenerateRequest) -> None:
+        """Set env vars to control pipeline stages based on request options.
+
+        Pipeline backend (ltx/sana) is determined at server startup and cannot be
+        changed at runtime. Refine and upsample toggles are read per-generation.
+        """
+        import os
+
+        # Check if requested backend matches the loaded one
+        current_backend = self.config.pipeline_backend
+        if req.pipeline_backend is not None and req.pipeline_backend != current_backend:
+            logger.warning(
+                "Requested pipeline_backend=%s but server loaded %s. "
+                "Restart server with PIPELINE_BACKEND=%s to switch.",
+                req.pipeline_backend, current_backend, req.pipeline_backend,
+            )
+
+        # Refiner toggle (Sana pipeline reads these at generation time)
+        os.environ["SANA_ENABLE_REFINE"] = "true" if req.enable_refine else "false"
+        os.environ["SANA_ENABLE_UPSAMPLE"] = "true" if req.enable_upsample else "false"
+
+        # Diffusers variant uses inverted naming
+        os.environ["SANA_SKIP_REFINE"] = "false" if req.enable_refine else "true"
+        os.environ["SANA_SKIP_UPSAMPLE"] = "false" if req.enable_upsample else "true"
+
+        logger.info(
+            "Pipeline config: backend=%s, refine=%s, upsample=%s",
+            current_backend, req.enable_refine, req.enable_upsample,
+        )
 
     def _generate_scenes_sequential(
         self,

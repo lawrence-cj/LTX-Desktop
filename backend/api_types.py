@@ -354,6 +354,9 @@ def _default_agent_scenes() -> list[AgentSceneInput]:
     return []
 
 
+PipelineBackend = Literal["ltx", "sana", "sana-diffusers"]
+
+
 class AgentGenerateRequest(BaseModel):
     script: NonEmptyPrompt
     style: VideoStyle = "cinematic"
@@ -366,6 +369,10 @@ class AgentGenerateRequest(BaseModel):
     negative_prompt: str = ""
     generate_audio: bool = False
     parallel: bool = False  # If True, generate all scenes in parallel (no I2V chaining)
+    # Pipeline options
+    pipeline_backend: PipelineBackend | None = None  # None = use server default (env PIPELINE_BACKEND)
+    enable_refine: bool = True  # LTX refiner stage (Sana pipeline only)
+    enable_upsample: bool = False  # 2x spatial upsampler
     scenes: list[AgentSceneInput] = Field(default_factory=_default_agent_scenes)
 
 

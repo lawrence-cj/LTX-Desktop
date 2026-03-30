@@ -79,6 +79,10 @@ export function AgentView() {
   const [totalDuration, setTotalDuration] = useState(60)
   const [generateAudio, setGenerateAudio] = useState(false)
   const [parallelMode, setParallelMode] = useState(false)
+  const [pipelineBackend, setPipelineBackend] = useState<string>('sana')
+  const [serverBackend, setServerBackend] = useState<string | null>(null) // what the server actually loaded
+  const [enableRefine, setEnableRefine] = useState(true)
+  const [enableUpsample, setEnableUpsample] = useState(false)
 
   // Generation state
   const [isGenerating, setIsGenerating] = useState(false)
@@ -139,6 +143,19 @@ export function AgentView() {
     return () => stopPolling()
   }, [stopPolling])
 
+  // Fetch server pipeline backend on mount
+  useEffect(() => {
+    backendFetch('/api/runtime-policy').then(async res => {
+      if (res.ok) {
+        const data = await res.json()
+        if (data.pipeline_backend) {
+          setServerBackend(data.pipeline_backend)
+          setPipelineBackend(data.pipeline_backend)
+        }
+      }
+    }).catch(() => {})
+  }, [])
+
   // On mount, check if there's an active generation to resume
   useEffect(() => {
     const checkActive = async () => {
@@ -197,6 +214,9 @@ export function AgentView() {
           model: 'fast',
           generate_audio: generateAudio,
           parallel: parallelMode,
+          pipeline_backend: pipelineBackend,
+          enable_refine: enableRefine,
+          enable_upsample: enableUpsample,
           ...(scenes ? { scenes } : {}),
         }),
       })
@@ -536,6 +556,54 @@ export function AgentView() {
                   <option value="16:9">16:9</option>
                   <option value="9:16">9:16</option>
                 </select>
+              </div>
+            </div>
+
+            {/* Pipeline options */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-zinc-300 block">Pipeline</label>
+              <div className="grid grid-cols-3 gap-2">
+                {(['ltx', 'sana', 'sana-diffusers'] as const).map(b => (
+                  <button
+                    key={b}
+                    onClick={() => setPipelineBackend(b)}
+                    disabled={isGenerating}
+                    className={`px-2 py-1.5 rounded border text-xs transition-all ${
+                      pipelineBackend === b
+                        ? 'border-violet-500 bg-violet-500/10 text-violet-300'
+                        : 'border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-zinc-600'
+                    }`}
+                  >
+                    {b === 'ltx' ? 'LTX 2.3' : b === 'sana' ? 'Sana+LTX' : 'Sana+Diffusers'}
+                  </button>
+                ))}
+              </div>
+              {serverBackend && pipelineBackend !== serverBackend && (
+                <p className="text-[10px] text-amber-500">
+                  Server loaded "{serverBackend}". Restart server with PIPELINE_BACKEND={pipelineBackend} to switch.
+                </p>
+              )}
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={enableRefine}
+                    onChange={e => setEnableRefine(e.target.checked)}
+                    disabled={isGenerating || pipelineBackend === 'ltx'}
+                    className="rounded border-zinc-600 bg-zinc-800 text-violet-500 focus:ring-violet-500"
+                  />
+                  <span className={`text-xs ${pipelineBackend === 'ltx' ? 'text-zinc-600' : 'text-zinc-400'}`}>Refiner</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={enableUpsample}
+                    onChange={e => setEnableUpsample(e.target.checked)}
+                    disabled={isGenerating}
+                    className="rounded border-zinc-600 bg-zinc-800 text-violet-500 focus:ring-violet-500"
+                  />
+                  <span className="text-xs text-zinc-400">Upsampler (2x)</span>
+                </label>
               </div>
             </div>
 
