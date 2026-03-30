@@ -1,5 +1,6 @@
-"""LLM-powered Director Agent using Gemini API for intelligent scene planning.
+"""LLM-powered Director Agent using NVIDIA OpenAI-compatible API for scene planning.
 
+Uses gcp/google/gemini-3-pro via NVIDIA inference API.
 Falls back to rule-based director if no API key or on error.
 """
 
@@ -7,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 
 from api_types import (
@@ -14,7 +16,6 @@ from api_types import (
     AgentScenePlan,
     VIDEO_STYLE_PROMPTS,
 )
-from services.interfaces import HTTPClient
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ Guidelines:
 - Each scene's prompt should be self-contained but fit the overall story
 - Match the requested visual style throughout
 
-IMPORTANT: Return ONLY a JSON array of scene objects. No markdown, no explanation.
+IMPORTANT: Return ONLY a JSON array of scene objects. No markdown, no explanation, no code blocks.
 
 Example:
 [
@@ -51,16 +52,30 @@ Example:
   }
 ]"""
 
+# NVIDIA inference API config
+_NVIDIA_BASE_URL = "https://inference-api.nvidia.com"
+_NVIDIA_MODEL = "gcp/google/gemini-2.5-pro"
+
+
+def _get_api_key() -> str | None:
+    """Get API key from env var LTX_DESKTOP_GEMINI_API or app settings."""
+    return os.environ.get("LTX_DESKTOP_GEMINI_API") or None
+
 
 def plan_scenes_with_llm(
     req: AgentGenerateRequest,
-    gemini_api_key: str,
-    http: HTTPClient,
+    api_key: str | None = None,
 ) -> list[AgentScenePlan] | None:
-    """Use Gemini to intelligently plan scenes from a script.
+    """Use LLM to intelligently plan scenes from a script.
 
+    Uses NVIDIA OpenAI-compatible API with Gemini 3 Pro.
     Returns None if LLM planning fails (caller should fall back to rule-based).
     """
+    key = api_key or _get_api_key()
+    if not key:
+        logger.info("No LLM API key available, skipping LLM planning")
+        return None
+
     style_desc = VIDEO_STYLE_PROMPTS.get(req.style, VIDEO_STYLE_PROMPTS["cinematic"])
     max_scenes = req.total_duration // req.duration_per_scene
 
@@ -83,45 +98,45 @@ def plan_scenes_with_llm(
                 user_text += f" [{s.camera_motion}]"
             user_text += "\n"
 
-    gemini_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": user_text}]}],
-        "systemInstruction": {"parts": [{"text": _SYSTEM_PROMPT}]},
-        "generationConfig": {
-            "temperature": 0.8,
-            "maxOutputTokens": 4096,
-            "responseMimeType": "application/json",
-        },
-    }
-
     try:
-        response = http.post(
-            gemini_url,
-            headers={"Content-Type": "application/json", "x-goog-api-key": gemini_api_key},
-            json_payload=payload,
-            timeout=30,
+        from openai import OpenAI
+
+        client = OpenAI(api_key=key, base_url=_NVIDIA_BASE_URL)
+        response = client.chat.completions.create(
+            model=_NVIDIA_MODEL,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": user_text},
+            ],
+            temperature=0.8,
+            max_tokens=4096,
+            stream=False,
         )
+        text = response.choices[0].message.content or ""
+    except ImportError:
+        logger.warning("openai package not installed, skipping LLM planning")
+        return None
     except Exception as e:
-        logger.warning("Gemini API call failed: %s", e)
+        logger.warning("LLM API call failed: %s", e)
         return None
 
-    if response.status_code != 200:
-        logger.warning("Gemini API returned %d: %s", response.status_code, response.text[:200])
+    if not text.strip():
+        logger.warning("LLM returned empty response")
         return None
 
+    # Parse JSON — handle markdown code blocks
     try:
-        resp_data = response.json()
-        text = resp_data["candidates"][0]["content"]["parts"][0]["text"]
         scenes_raw = json.loads(text)
-    except (KeyError, IndexError, json.JSONDecodeError) as e:
-        logger.warning("Failed to parse Gemini response: %s", e)
-        try:
-            json_match = re.search(r'\[.*\]', text, re.DOTALL)
-            if json_match:
+    except json.JSONDecodeError:
+        json_match = re.search(r'\[.*\]', text, re.DOTALL)
+        if json_match:
+            try:
                 scenes_raw = json.loads(json_match.group())
-            else:
+            except json.JSONDecodeError:
+                logger.warning("Failed to parse LLM response as JSON: %s", text[:200])
                 return None
-        except Exception:
+        else:
+            logger.warning("No JSON array found in LLM response: %s", text[:200])
             return None
 
     if not isinstance(scenes_raw, list) or len(scenes_raw) == 0:

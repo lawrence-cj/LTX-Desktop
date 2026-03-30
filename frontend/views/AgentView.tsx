@@ -77,6 +77,8 @@ export function AgentView() {
   const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16'>('16:9')
   const [durationPerScene, setDurationPerScene] = useState(5)
   const [totalDuration, setTotalDuration] = useState(60)
+  const [generateAudio, setGenerateAudio] = useState(false)
+  const [parallelMode, setParallelMode] = useState(false)
 
   // Generation state
   const [isGenerating, setIsGenerating] = useState(false)
@@ -173,6 +175,8 @@ export function AgentView() {
           total_duration: totalDuration,
           fps: '24',
           model: 'fast',
+          generate_audio: generateAudio,
+          parallel: parallelMode,
           ...(scenes ? { scenes } : {}),
         }),
       })
@@ -514,6 +518,28 @@ export function AgentView() {
                 </select>
               </div>
             </div>
+
+            {/* Audio toggle */}
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={generateAudio}
+                onChange={e => setGenerateAudio(e.target.checked)}
+                disabled={isGenerating}
+                className="rounded border-zinc-600 bg-zinc-800 text-violet-500 focus:ring-violet-500"
+              />
+              <span className="text-xs text-zinc-400">Generate audio for each scene</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={parallelMode}
+                onChange={e => setParallelMode(e.target.checked)}
+                disabled={isGenerating}
+                className="rounded border-zinc-600 bg-zinc-800 text-violet-500 focus:ring-violet-500"
+              />
+              <span className="text-xs text-zinc-400">Parallel generation (faster, no visual continuity)</span>
+            </label>
 
             {/* Generate Button */}
             <div className="pt-2">

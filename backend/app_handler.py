@@ -222,7 +222,6 @@ class AppHandler:
             video_generation_handler=self.video_generation,
             generation_handler=self.generation,
             config=config,
-            http=http,
         )
 
         self.downloads.cleanup_downloading_dir()

@@ -29,7 +29,6 @@ if TYPE_CHECKING:
     from runtime_config.runtime_config import RuntimeConfig
     from state.app_state_types import AppState
     from handlers.generation_handler import GenerationHandler
-    from services.interfaces import HTTPClient
 
 logger = logging.getLogger(__name__)
 
@@ -60,12 +59,10 @@ class AgentHandler(StateHandlerBase):
         video_generation_handler: VideoGenerationHandler,
         generation_handler: GenerationHandler,
         config: RuntimeConfig,
-        http: HTTPClient | None = None,
     ) -> None:
         super().__init__(state, lock, config)
         self._video_gen = video_generation_handler
         self._generation = generation_handler
-        self._http = http
         self._agent_state = AgentState()
         self._agent_lock = threading.Lock()
 
@@ -84,15 +81,13 @@ class AgentHandler(StateHandlerBase):
             self._update_agent("planning", 0, 0, "Decomposing script into scenes...")
             scene_plans: list[AgentScenePlan] | None = None
 
-            # Try LLM-based planning if Gemini API key is available
-            gemini_key = self.state.app_settings.gemini_api_key
-            if gemini_key and self._http:
-                self._update_agent("planning", 0, 0, "Using AI to plan scenes...")
-                scene_plans = plan_scenes_with_llm(req, gemini_key, self._http)
-                if scene_plans:
-                    logger.info("LLM director produced %d scenes", len(scene_plans))
-                else:
-                    logger.info("LLM director failed, falling back to rule-based")
+            # Try LLM-based planning via NVIDIA API (uses LTX_DESKTOP_GEMINI_API env)
+            self._update_agent("planning", 0, 0, "Using AI to plan scenes...")
+            scene_plans = plan_scenes_with_llm(req)
+            if scene_plans:
+                logger.info("LLM director produced %d scenes", len(scene_plans))
+            else:
+                logger.info("LLM planning unavailable, using rule-based director")
 
             # Fall back to rule-based planning
             if scene_plans is None:
@@ -118,60 +113,11 @@ class AgentHandler(StateHandlerBase):
             except Exception as e:
                 logger.warning("Model warmup failed (will load on first generation): %s", e)
 
-            # Phase 2: Generate each scene (with visual continuity)
-            self._update_agent("generating", 0, total, f"Generating {total} scenes...")
-            video_paths: list[str] = []
-            last_frame_path: str | None = None  # For scene-to-scene visual continuity
-
-            for i, scene in enumerate(scene_plans):
-                if self._is_cancelled():
-                    return AgentGenerateResponse(status="cancelled")
-
-                self._update_agent(
-                    "generating",
-                    i,
-                    total,
-                    f"Generating scene {i + 1}/{total}: {scene.description[:60]}...",
-                )
-
-                # Use last frame of previous scene as I2V conditioning
-                # (only if the user didn't already provide an image for this scene)
-                if last_frame_path and scene.image_path is None:
-                    scene = AgentScenePlan(
-                        scene_index=scene.scene_index,
-                        description=scene.description,
-                        prompt=scene.prompt,
-                        duration=scene.duration,
-                        camera_motion=scene.camera_motion,
-                        image_path=last_frame_path,
-                    )
-
-                try:
-                    video_path = self._generate_single_scene(scene, req)
-                except Exception as scene_err:
-                    logger.error("Scene %d/%d failed: %s", i + 1, total, scene_err)
-                    # Record failure but continue with remaining scenes
-                    with self._agent_lock:
-                        self._agent_state.failed_scenes.append(i)
-                        self._agent_state.overall_progress = int(((i + 1) / total) * 90)
-                    last_frame_path = None  # Can't chain from a failed scene
-                    continue
-
-                video_paths.append(video_path)
-
-                # Extract last frame for next scene's continuity
-                try:
-                    last_frame_path = self._extract_last_frame(video_path, i)
-                except Exception as e:
-                    logger.warning("Failed to extract last frame from scene %d: %s", i, e)
-                    last_frame_path = None
-
-                with self._agent_lock:
-                    self._agent_state.video_paths.append(video_path)
-                    self._agent_state.completed_scenes.append(i)
-                    self._agent_state.overall_progress = int(((i + 1) / total) * 90)
-
-                logger.info("Scene %d/%d generated: %s", i + 1, total, video_path)
+            # Phase 2: Generate scenes
+            if req.parallel and total > 1:
+                video_paths = self._generate_scenes_parallel(scene_plans, req, total)
+            else:
+                video_paths = self._generate_scenes_sequential(scene_plans, req, total)
 
             # Phase 3: Assemble final video
             if not video_paths:
@@ -226,10 +172,7 @@ class AgentHandler(StateHandlerBase):
 
     def plan_only(self, req: AgentGenerateRequest) -> list[AgentScenePlan]:
         """Return scene plans without generating any videos."""
-        gemini_key = self.state.app_settings.gemini_api_key
-        scene_plans: list[AgentScenePlan] | None = None
-        if gemini_key and self._http:
-            scene_plans = plan_scenes_with_llm(req, gemini_key, self._http)
+        scene_plans = plan_scenes_with_llm(req)
         if scene_plans is None:
             scene_plans = plan_scenes(req)
         return scene_plans
@@ -240,6 +183,108 @@ class AgentHandler(StateHandlerBase):
             self._agent_state.status = "cancelled"
         # Also cancel any in-progress generation
         self._generation.cancel_generation()
+
+    def _generate_scenes_sequential(
+        self,
+        scene_plans: list[AgentScenePlan],
+        req: AgentGenerateRequest,
+        total: int,
+    ) -> list[str]:
+        """Generate scenes sequentially with I2V chaining for visual continuity."""
+        self._update_agent("generating", 0, total, f"Generating {total} scenes...")
+        video_paths: list[str] = []
+        last_frame_path: str | None = None
+
+        for i, scene in enumerate(scene_plans):
+            if self._is_cancelled():
+                break
+
+            self._update_agent(
+                "generating", i, total,
+                f"Generating scene {i + 1}/{total}: {scene.description[:60]}...",
+            )
+
+            # Use last frame of previous scene as I2V conditioning
+            if last_frame_path and scene.image_path is None:
+                scene = AgentScenePlan(
+                    scene_index=scene.scene_index,
+                    description=scene.description,
+                    prompt=scene.prompt,
+                    duration=scene.duration,
+                    camera_motion=scene.camera_motion,
+                    image_path=last_frame_path,
+                )
+
+            try:
+                video_path = self._generate_single_scene(scene, req)
+            except Exception as scene_err:
+                logger.error("Scene %d/%d failed: %s", i + 1, total, scene_err)
+                with self._agent_lock:
+                    self._agent_state.failed_scenes.append(i)
+                    self._agent_state.overall_progress = int(((i + 1) / total) * 90)
+                last_frame_path = None
+                continue
+
+            video_paths.append(video_path)
+
+            try:
+                last_frame_path = self._extract_last_frame(video_path, i)
+            except Exception as e:
+                logger.warning("Failed to extract last frame from scene %d: %s", i, e)
+                last_frame_path = None
+
+            with self._agent_lock:
+                self._agent_state.video_paths.append(video_path)
+                self._agent_state.completed_scenes.append(i)
+                self._agent_state.overall_progress = int(((i + 1) / total) * 90)
+
+            logger.info("Scene %d/%d generated: %s", i + 1, total, video_path)
+
+        return video_paths
+
+    def _generate_scenes_parallel(
+        self,
+        scene_plans: list[AgentScenePlan],
+        req: AgentGenerateRequest,
+        total: int,
+    ) -> list[str]:
+        """Generate all scenes in parallel (no I2V chaining)."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        self._update_agent("generating", 0, total, f"Generating {total} scenes in parallel...")
+        # Map scene_index -> video_path
+        results: dict[int, str] = {}
+
+        def gen_one(idx: int, scene: AgentScenePlan) -> tuple[int, str]:
+            return idx, self._generate_single_scene(scene, req)
+
+        # Use up to 4 workers (limited by GPU memory)
+        max_workers = min(total, 4)
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {
+                pool.submit(gen_one, i, scene): i
+                for i, scene in enumerate(scene_plans)
+            }
+            for future in as_completed(futures):
+                scene_idx = futures[future]
+                try:
+                    idx, video_path = future.result()
+                    results[idx] = video_path
+                    with self._agent_lock:
+                        self._agent_state.video_paths.append(video_path)
+                        self._agent_state.completed_scenes.append(idx)
+                        done = len(self._agent_state.completed_scenes)
+                        self._agent_state.overall_progress = int((done / total) * 90)
+                        self._agent_state.scene_status = f"Completed scene {done}/{total}"
+                    logger.info("Parallel scene %d completed: %s", idx + 1, video_path)
+                except Exception as e:
+                    logger.error("Parallel scene %d failed: %s", scene_idx + 1, e)
+                    with self._agent_lock:
+                        self._agent_state.failed_scenes.append(scene_idx)
+
+        # Return in scene order
+        video_paths = [results[i] for i in sorted(results.keys())]
+        return video_paths
 
     def _generate_single_scene(
         self,
@@ -265,6 +310,7 @@ class AgentHandler(StateHandlerBase):
             model=req.model,
             cameraMotion=scene.camera_motion,
             negativePrompt=combined_negative,
+            audio="true" if req.generate_audio else "false",
             duration=str(scene.duration),
             fps=req.fps,
             audio="false",
@@ -346,13 +392,14 @@ class AgentHandler(StateHandlerBase):
             raise RuntimeError(f"xfade failed: {result.stderr[:300]}")
 
     def _assemble_simple_concat(self, video_paths: list[str], output_path: str) -> None:
-        """Simple concatenation without transitions."""
+        """Simple concatenation without transitions, preserving audio tracks."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             for vp in video_paths:
                 f.write(f"file '{vp}'\n")
             concat_file = f.name
 
         try:
+            # Try stream copy first (fastest, preserves audio)
             cmd = [
                 "ffmpeg", "-y",
                 "-f", "concat", "-safe", "0",
@@ -362,13 +409,14 @@ class AgentHandler(StateHandlerBase):
             ]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
             if result.returncode != 0:
-                # Re-encode fallback
+                # Re-encode fallback (handles mixed codecs/resolutions, maps audio)
                 cmd_reencode = [
                     "ffmpeg", "-y",
                     "-f", "concat", "-safe", "0",
                     "-i", concat_file,
                     "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-c:a", "aac",
+                    "-c:a", "aac", "-b:a", "192k",
+                    "-map", "0:v?", "-map", "0:a?",  # Map video and audio if present
                     str(output_path),
                 ]
                 result = subprocess.run(cmd_reencode, capture_output=True, text=True, timeout=300)

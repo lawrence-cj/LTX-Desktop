@@ -364,6 +364,8 @@ class AgentGenerateRequest(BaseModel):
     fps: str = "24"
     model: str = "fast"
     negative_prompt: str = ""
+    generate_audio: bool = False
+    parallel: bool = False  # If True, generate all scenes in parallel (no I2V chaining)
     scenes: list[AgentSceneInput] = Field(default_factory=_default_agent_scenes)
 
 
