@@ -139,6 +139,26 @@ export function AgentView() {
     return () => stopPolling()
   }, [stopPolling])
 
+  // On mount, check if there's an active generation to resume
+  useEffect(() => {
+    const checkActive = async () => {
+      try {
+        const res = await backendFetch('/api/agent/progress')
+        if (!res.ok) return
+        const data: AgentProgress = await res.json()
+        if (data.status === 'generating' || data.status === 'planning' || data.status === 'assembling') {
+          setIsGenerating(true)
+          setProgress(data)
+          genStartTime.current = Date.now() - (data.completed_scenes.length * 40 * 1000) // rough estimate
+          startPolling()
+        } else if (data.status === 'complete' && data.scene_plans.length > 0) {
+          setProgress(data)
+        }
+      } catch { /* ignore */ }
+    }
+    checkActive()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ============================================================
   // Generate
   // ============================================================

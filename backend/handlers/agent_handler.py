@@ -346,41 +346,57 @@ class AgentHandler(StateHandlerBase):
         self._assemble_simple_concat(video_paths, str(final_path))
         return str(final_path)
 
+    @staticmethod
+    def _probe_duration(video_path: str) -> float:
+        """Get video duration in seconds using ffprobe."""
+        cmd = [
+            "ffprobe", "-v", "quiet",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            video_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if result.returncode != 0:
+            return 5.0  # fallback
+        try:
+            return float(result.stdout.strip())
+        except ValueError:
+            return 5.0
+
     def _assemble_with_crossfade(
         self, video_paths: list[str], output_path: str, crossfade: float
     ) -> None:
         """Assemble videos with crossfade transitions using ffmpeg xfade filter."""
         n = len(video_paths)
-        # Build ffmpeg command with xfade filters
-        cmd: list[str] = ["ffmpeg", "-y"]
 
-        # Add all inputs
+        # Probe actual durations
+        durations = [self._probe_duration(vp) for vp in video_paths]
+        logger.info("Video durations for crossfade: %s", [f"{d:.1f}s" for d in durations])
+
+        # Build ffmpeg command
+        cmd: list[str] = ["ffmpeg", "-y"]
         for vp in video_paths:
             cmd.extend(["-i", vp])
 
-        # Build xfade filter chain
-        # For n videos, we need n-1 xfade filters chained together
-        # Each xfade needs the offset (cumulative duration minus crossfade overlaps)
+        # Build xfade filter chain with correct offsets
+        # offset[i] = sum(durations[0..i]) - i * crossfade_duration
         filter_parts: list[str] = []
+        cumulative = durations[0]
 
-        # We need to probe video durations - use a rough estimate based on scene plans
-        # For simplicity, chain xfade filters with calculated offsets
-        # [0][1]xfade -> [tmp1]; [tmp1][2]xfade -> [tmp2]; ...
-        if n == 2:
+        for i in range(1, n):
+            offset = max(0, cumulative - crossfade)
+            in_a = f"[{0 if i == 1 else ''}{'tmp' + str(i - 2) if i > 1 else '0'}:v]"
+            in_b = f"[{i}:v]"
+            if i == 1:
+                in_a = "[0:v]"
+            else:
+                in_a = f"[tmp{i - 2}]"
+
+            out_label = f"[tmp{i - 1}]" if i < n - 1 else "[outv]"
             filter_parts.append(
-                f"[0:v][1:v]xfade=transition=fade:duration={crossfade}:offset=0[outv]"
+                f"{in_a}{in_b}xfade=transition=fade:duration={crossfade}:offset={offset:.3f}{out_label}"
             )
-        else:
-            # Chain: first pair
-            filter_parts.append(
-                f"[0:v][1:v]xfade=transition=fade:duration={crossfade}:offset=0[tmp0]"
-            )
-            for i in range(2, n):
-                in_label = f"[tmp{i - 2}]"
-                out_label = f"[tmp{i - 1}]" if i < n - 1 else "[outv]"
-                filter_parts.append(
-                    f"{in_label}[{i}:v]xfade=transition=fade:duration={crossfade}:offset=0{out_label}"
-                )
+            cumulative = offset + durations[i]
 
         filter_str = ";".join(filter_parts)
         cmd.extend(["-filter_complex", filter_str, "-map", "[outv]"])
