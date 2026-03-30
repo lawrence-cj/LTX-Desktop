@@ -1,6 +1,7 @@
 """Sana-Video + LTX Refiner two-stage video pipeline for LTX Desktop.
 
 Stage 1: Sana Video DiT generates latents in LTX VAE latent space (diffusers)
+         Supports both T2V (SanaVideoPipeline) and I2V (SanaImageToVideoPipeline).
 Stage 2: LTX spatial upsampler + LTX transformer refiner (ltx_core, 3 steps)
 Stage 3: LTX VAE decode → MP4
 
@@ -17,6 +18,7 @@ from collections.abc import Iterator
 from typing import Final
 
 import torch
+from PIL import Image as PILImageModule
 
 from api_types import ImageConditioningInput
 from services.ltx_pipeline_common import default_tiling_config, encode_video_output, video_chunks_number
@@ -95,12 +97,23 @@ class SanaLTXFastVideoPipeline:
         self.motion_score = int(os.environ.get("SANA_MOTION_SCORE", str(SANA_DEFAULT_MOTION_SCORE)))
 
         sana_model_id = os.environ.get("SANA_MODEL_PATH", "Efficient-Large-Model/SANA-Video_2B_480p_diffusers")
+        sana_i2v_model_id = os.environ.get("SANA_I2V_MODEL_PATH", "").strip()
 
         logger.info("Loading Sana Video pipeline from: %s", sana_model_id)
-        from diffusers import SanaVideoPipeline
+        from diffusers import FlowMatchEulerDiscreteScheduler, SanaImageToVideoPipeline, SanaVideoPipeline
 
         self.sana_pipe = SanaVideoPipeline.from_pretrained(sana_model_id, torch_dtype=self.dtype)
         self.sana_pipe.text_encoder.to(self.dtype)
+
+        if sana_i2v_model_id:
+            logger.info("Loading separate Sana I2V pipeline from: %s", sana_i2v_model_id)
+            self.sana_i2v_pipe: SanaImageToVideoPipeline | None = SanaImageToVideoPipeline.from_pretrained(
+                sana_i2v_model_id, torch_dtype=self.dtype,
+            )
+            self.sana_i2v_pipe.text_encoder.to(self.dtype)
+        else:
+            logger.info("No SANA_I2V_MODEL_PATH set — I2V disabled")
+            self.sana_i2v_pipe = None
 
         if self.enable_refine:
             logger.info("LTX Refiner enabled (upsample=%s)", self.enable_upsample)
@@ -205,6 +218,71 @@ class SanaLTXFastVideoPipeline:
         logger.info("Sana Stage 1 done, latent shape: %s", video_latent.shape)
 
         self.sana_pipe.to("cpu")
+        _cleanup_gpu()
+
+        return video_latent
+
+    # ------------------------------------------------------------------
+    # Stage 1b: Sana Image-to-Video generation
+    # ------------------------------------------------------------------
+
+    def _run_sana_i2v_stage(
+        self,
+        prompt: str,
+        image_path: str,
+        seed: int,
+        height: int,
+        width: int,
+        num_frames: int,
+    ) -> torch.Tensor:
+        """Run Sana I2V DiT: condition on first-frame image, produce latents [1, 128, T', H', W']."""
+        self.sana_i2v_pipe.enable_model_cpu_offload()
+
+        full_prompt = prompt
+        if self.motion_score > 0:
+            full_prompt += f" motion score: {self.motion_score}."
+
+        image = PILImageModule.open(image_path).convert("RGB")
+        generator = torch.Generator(device=self.device).manual_seed(seed)
+
+        logger.info("Sana I2V Stage 1: generating %dx%d, %d frames from image %s ...", width, height, num_frames, image_path)
+        sana_output = self.sana_i2v_pipe(
+            image=image,
+            prompt=full_prompt,
+            negative_prompt=(
+                "A chaotic sequence with misshapen, deformed limbs in heavy motion blur, "
+                "sudden disappearance, jump cuts, jerky movements, rapid shot changes, "
+                "frames out of sync, inconsistent character shapes, temporal artifacts, "
+                "jitter, and ghosting effects, creating a disorienting visual experience."
+            ),
+            height=height,
+            width=width,
+            frames=num_frames,
+            guidance_scale=self.guidance_scale,
+            num_inference_steps=self.num_steps,
+            generator=generator,
+            output_type="latent",
+            return_dict=True,
+        )
+
+        video_latent = None
+        for attr in ("latents", "frames", "video_latents", "latent", "dit_latents"):
+            val = getattr(sana_output, attr, None)
+            if val is not None:
+                video_latent = val
+                break
+
+        if video_latent is None:
+            raise RuntimeError("Failed to extract latents from Sana I2V output")
+
+        if isinstance(video_latent, (list, tuple)):
+            video_latent = video_latent[0]
+        if video_latent.dim() == 4:
+            video_latent = video_latent.unsqueeze(0)
+
+        logger.info("Sana I2V Stage 1 done, latent shape: %s", video_latent.shape)
+
+        self.sana_i2v_pipe.to("cpu")
         _cleanup_gpu()
 
         return video_latent
@@ -407,25 +485,32 @@ class SanaLTXFastVideoPipeline:
         images: list[ImageConditioningInput],
         output_path: str,
     ) -> None:
-        if images:
-            logger.warning(
-                "Sana pipeline received %d image(s) for I2V — "
-                "image conditioning is not yet supported, falling back to T2V",
-                len(images),
-            )
-
         if num_frames > SANA_MAX_FRAMES:
             logger.info("Clamping num_frames from %d to %d (Sana limit)", num_frames, SANA_MAX_FRAMES)
             num_frames = SANA_MAX_FRAMES
 
-        # Stage 1
-        video_latent = self._run_sana_stage(
-            prompt=prompt,
-            seed=seed,
-            height=height,
-            width=width,
-            num_frames=num_frames,
-        )
+        # Stage 1: T2V or I2V
+        if images and self.sana_i2v_pipe is not None:
+            image_path = images[0].path
+            logger.info("Sana I2V mode: using image %s as first-frame conditioning", image_path)
+            video_latent = self._run_sana_i2v_stage(
+                prompt=prompt,
+                image_path=image_path,
+                seed=seed,
+                height=height,
+                width=width,
+                num_frames=num_frames,
+            )
+        else:
+            if images:
+                logger.warning("I2V requested but no SANA_I2V_MODEL_PATH configured — falling back to T2V")
+            video_latent = self._run_sana_stage(
+                prompt=prompt,
+                seed=seed,
+                height=height,
+                width=width,
+                num_frames=num_frames,
+            )
 
         # Derive actual frame count from Sana's latent temporal dimension.
         # Sana may produce a different number of latent frames than requested;

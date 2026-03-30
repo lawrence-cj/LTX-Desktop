@@ -50,17 +50,35 @@ export SANA_LTX_GEMMA_ROOT="/home/junsongc/junsongc/code/diffusion/Sana/output/p
 export PIPELINE_BACKEND="sana"      # "ltx" or "sana": sana + ltx refiner
 export SANA_MODEL_PATH="${SANA_DIR}"
 
-# ─── Sana generation options ─────────────────────────────────────────────
+# ─── Sana I2V (Image-to-Video) ────────────────────────────────────────────
+# I2V requires a standard Sana Video model (not LTX-VAE variant).
+# Set SANA_I2V_MODEL_PATH to enable I2V; leave empty to disable.
+export SANA_I2V_MODEL_PATH="Efficient-Large-Model/SANA-Video_2B_480p_diffusers"
+
+# ─── Sana Video generation options ───────────────────────────────────────
 export SANA_ENABLE_REFINE="true"      # LTX refiner Stage 2 (3 steps)
 export SANA_ENABLE_UPSAMPLE="false"   # spatial 2x upsampler (set true for higher res)
 export SANA_GUIDANCE_SCALE="6.0"
 export SANA_NUM_STEPS="50"
 export SANA_MOTION_SCORE="30"
 
+# ─── Sana Image generation ───────────────────────────────────────────────
+# When PIPELINE_BACKEND=sana, the Image tab uses Sana instead of ZIT.
+#
+# Two modes:
+#   1) Set SANA_IMAGE_MODEL_PATH → loads a dedicated 2D image model (SanaPipeline)
+#   2) Leave SANA_IMAGE_MODEL_PATH empty → reuses the video model (SANA_MODEL_PATH)
+#      to generate single-frame images.  No extra download needed.
+#
+# export SANA_IMAGE_MODEL_PATH="Efficient-Large-Model/SANA1.5_1.6B_1024px_diffusers"
+export SANA_IMAGE_MODEL_PATH=""           # empty = reuse video model for images
+export SANA_IMAGE_GUIDANCE_SCALE="6.0"
+
 echo "╔══════════════════════════════════════════════════════════╗"
-echo "║          LTX Desktop — Sana Video Configuration         ║"
+echo "║       LTX Desktop — Sana Video + Image Configuration    ║"
 echo "╠══════════════════════════════════════════════════════════╣"
 echo "║ Pipeline:   Sana Video → LTX 2.0 Refiner               ║"
+echo "║ Image:      ${SANA_IMAGE_MODEL_PATH:+Sana 2D (${SANA_IMAGE_MODEL_PATH##*/})}${SANA_IMAGE_MODEL_PATH:-Sana Video single-frame}"
 echo "║ Other:      IC-LoRA / A2V / Retake → LTX 2.3 defaults  ║"
 echo "╠══════════════════════════════════════════════════════════╣"
 echo "║ Sana Model: ${SANA_DIR##*/}"

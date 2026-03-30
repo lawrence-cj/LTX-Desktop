@@ -1,5 +1,6 @@
 import { session } from 'electron'
 import { isDev } from './config'
+import { getAuthToken, getBackendUrl } from './python-backend'
 
 // Enforce Content Security Policy via response headers (tamper-proof from renderer)
 export function setupCSP(): void {
@@ -39,4 +40,20 @@ export function setupCSP(): void {
       },
     })
   })
+
+  // Inject auth token into requests to the backend so that <img src> and
+  // <video src> (which cannot attach headers themselves) pass authentication.
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    { urls: ['http://localhost:*/*', 'http://127.0.0.1:*/*'] },
+    (details, callback) => {
+      const token = getAuthToken()
+      const backendUrl = getBackendUrl()
+
+      if (token && backendUrl && details.url.startsWith(backendUrl)) {
+        details.requestHeaders['Authorization'] = `Bearer ${token}`
+      }
+
+      callback({ requestHeaders: details.requestHeaders })
+    },
+  )
 }

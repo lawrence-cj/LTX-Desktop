@@ -32,6 +32,7 @@ from collections.abc import Iterator
 from typing import Final
 
 import torch
+from PIL import Image as PILImageModule
 
 from api_types import ImageConditioningInput
 from services.ltx_pipeline_common import default_tiling_config, encode_video_output, video_chunks_number
@@ -83,13 +84,24 @@ class SanaLTXDiffusersPipeline:
         self.skip_refine = os.environ.get("SANA_SKIP_REFINE", "false").lower() == "true"
 
         sana_model_id = os.environ.get("SANA_MODEL_PATH", "Efficient-Large-Model/SANA-Video_2B_480p_diffusers")
+        sana_i2v_model_id = os.environ.get("SANA_I2V_MODEL_PATH", "").strip()
         ltx2_model_id = os.environ.get("LTX2_MODEL_PATH", "Lightricks/LTX-2")
 
-        from diffusers import FlowMatchEulerDiscreteScheduler, SanaVideoPipeline
+        from diffusers import FlowMatchEulerDiscreteScheduler, SanaImageToVideoPipeline, SanaVideoPipeline
 
         logger.info("Loading Sana pipeline from: %s", sana_model_id)
         self.sana_pipe = SanaVideoPipeline.from_pretrained(sana_model_id, torch_dtype=self.dtype)
         self.sana_pipe.text_encoder.to(self.dtype)
+
+        if sana_i2v_model_id:
+            logger.info("Loading separate Sana I2V pipeline from: %s", sana_i2v_model_id)
+            self.sana_i2v_pipe: SanaImageToVideoPipeline | None = SanaImageToVideoPipeline.from_pretrained(
+                sana_i2v_model_id, torch_dtype=self.dtype,
+            )
+            self.sana_i2v_pipe.text_encoder.to(self.dtype)
+        else:
+            logger.info("No SANA_I2V_MODEL_PATH set — I2V disabled")
+            self.sana_i2v_pipe = None
 
         self.ltx_pipe = None
         self.upsample_pipe = None
@@ -137,37 +149,47 @@ class SanaLTXDiffusersPipeline:
         from diffusers.pipelines.ltx2.utils import STAGE_2_DISTILLED_SIGMA_VALUES
         from diffusers.pipelines.ltx2.export_utils import encode_video as diffusers_encode_video
 
-        if images:
-            logger.warning("Image conditioning not supported in diffusers Sana pipeline, using T2V")
-
         device = self.device
         dtype = self.dtype
         generator = torch.Generator(device=device).manual_seed(seed)
         full_prompt = prompt + f" motion score: {30}."
+        neg_prompt = "shaky, glitchy, low quality, worst quality"
 
-        # ── Stage 1: Sana Video ──
-        self.sana_pipe.enable_model_cpu_offload()
+        use_i2v = bool(images) and self.sana_i2v_pipe is not None
+        i2v_image = None
+        if images and not use_i2v:
+            logger.warning("I2V requested but no SANA_I2V_MODEL_PATH configured — falling back to T2V")
+        if use_i2v:
+            i2v_image = PILImageModule.open(images[0].path).convert("RGB")
+            logger.info("Sana-diffusers I2V mode: image %s", images[0].path)
+
+        # ── Stage 1: Sana Video (T2V or I2V) ──
+        if use_i2v:
+            self.sana_i2v_pipe.enable_model_cpu_offload()
+            stage1_pipe = self.sana_i2v_pipe
+        else:
+            self.sana_pipe.enable_model_cpu_offload()
+            stage1_pipe = self.sana_pipe
+
+        stage1_kwargs: dict[str, object] = {
+            "prompt": full_prompt,
+            "negative_prompt": neg_prompt,
+            "height": height, "width": width, "frames": num_frames,
+            "guidance_scale": 6.0, "num_inference_steps": 50,
+            "generator": generator,
+        }
+        if use_i2v:
+            stage1_kwargs["image"] = i2v_image
 
         if self.skip_refine:
-            video_frames = self.sana_pipe(
-                prompt=full_prompt,
-                negative_prompt="shaky, glitchy, low quality, worst quality",
-                height=height, width=width, frames=num_frames,
-                guidance_scale=6.0, num_inference_steps=50,
-                generator=generator,
-            ).frames[0]
+            video_frames = stage1_pipe(**stage1_kwargs).frames[0]
             from diffusers.utils import export_to_video
             export_to_video(video_frames, output_path, fps=int(frame_rate))
             return
 
-        sana_output = self.sana_pipe(
-            prompt=full_prompt,
-            negative_prompt="shaky, glitchy, low quality, worst quality",
-            height=height, width=width, frames=num_frames,
-            guidance_scale=6.0, num_inference_steps=50,
-            generator=generator,
-            output_type="latent", return_dict=True,
-        )
+        stage1_kwargs["output_type"] = "latent"
+        stage1_kwargs["return_dict"] = True
+        sana_output = stage1_pipe(**stage1_kwargs)
 
         video_latent = None
         for attr in ("latents", "frames", "video_latents", "latent", "dit_latents"):
@@ -183,7 +205,7 @@ class SanaLTXDiffusersPipeline:
             video_latent = video_latent.unsqueeze(0)
 
         del sana_output
-        self.sana_pipe.to("cpu")
+        stage1_pipe.to("cpu")
         _cleanup_gpu()
 
         logger.info("Stage 1 done, latent: %s", video_latent.shape)
